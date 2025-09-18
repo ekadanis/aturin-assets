@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FCM Admin Test - Laravel</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .btn {
+            background: #4285f4;
+            color: white;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 10px 5px;
+        }
+        .btn:hover { background: #3367d6; }
+        .btn:disabled { background: #ccc; cursor: not-allowed; }
+        .success { background: #4caf50; }
+        .warning { background: #ff9800; }
+        .error { background: #f44336; }
+        .admin { background: #9c27b0; }
+        .token-display {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 5px;
+            border-left: 4px solid #4285f4;
+            margin: 15px 0;
+            word-break: break-all;
+            font-family: monospace;
+        }
+        .step {
+            margin: 20px 0;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+        }
+        .admin-section {
+            background: #f3e5f5;
+            border-left: 4px solid #9c27b0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔥 FCM Admin Test Tool</h1>
+        <p>Tool ini untuk test admin FCM notifications menggunakan API Key authentication.</p>
+        
+        <!-- Step 1: Initialize Firebase -->
+        <div class="step">
+            <h3>📱 Step 1: Initialize Firebase</h3>
+            <button id="initFirebase" class="btn">Initialize Firebase</button>
+            <div id="initStatus"></div>
+        </div>
+        
+        <!-- Step 2: Request Permission -->
+        <div class="step">
+            <h3>🔔 Step 2: Request Notification Permission</h3>
+            <button id="requestPermission" class="btn" disabled>Request Permission</button>
+            <div id="permissionStatus"></div>
+        </div>
+        
+        <!-- Step 3: Get FCM Token -->
+        <div class="step">
+            <h3>🎯 Step 3: Get FCM Token</h3>
+            <button id="getToken" class="btn" disabled>Get FCM Token</button>
+            <div id="tokenDisplay"></div>
+        </div>
+        
+        <!-- Step 4: Admin FCM Test -->
+        <div class="step admin-section">
+            <h3>🚀 Step 4: Admin FCM Test (No Login Required)</h3>
+            <p><strong>🔑 Uses Admin API Key:</strong> <code>ATURIN_KEY_ULTRA_SECURE_2025</code></p>
+            
+            <h4>📤 Send to Specific Device</h4>
+            <input type="text" id="deviceTitle" placeholder="Notification Title" value="Admin Test Notification" style="width: 100%; padding: 10px; margin: 5px 0;">
+            <input type="text" id="deviceBody" placeholder="Notification Body" value="Hello from Admin API! 🚀" style="width: 100%; padding: 10px; margin: 5px 0;">
+            <button id="sendToDevice" class="btn admin" disabled>Send to Current Device</button>
+            <div id="deviceStatus"></div>
+            
+            <h4>📢 Broadcast to All Users</h4>
+            <input type="text" id="broadcastTitle" placeholder="Broadcast Title" value="System Announcement" style="width: 100%; padding: 10px; margin: 5px 0;">
+            <input type="text" id="broadcastBody" placeholder="Broadcast Body" value="Important system update! Please check the app." style="width: 100%; padding: 10px; margin: 5px 0;">
+            <button id="sendBroadcast" class="btn admin">Send Broadcast</button>
+            <div id="broadcastStatus"></div>
+        </div>
+
+        <!-- Logs -->
+        <div class="step">
+            <h3>📋 Logs</h3>
+            <div id="logs" style="background: #2d3748; color: #e2e8f0; padding: 15px; border-radius: 5px; height: 300px; overflow-y: auto; font-family: monospace;"></div>
+        </div>
+    </div>
+
+    <!-- Firebase SDK -->
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-messaging-compat.js"></script>
+
+    <script>
+        // 🔥 Firebase Config
+        const firebaseConfig = {
+            apiKey: "AIzaSyDAkZbk1-2MXjo3NOvUMpSUomYYoPdQnZs",
+            authDomain: "aturin-app.firebaseapp.com",
+            projectId: "aturin-app",
+            storageBucket: "aturin-app.firebasestorage.app",
+            messagingSenderId: "63603832683",
+            appId: "1:63603832683:web:5597926ae24769cf41be2e",
+            measurementId: "G-74BQLBG750"
+        };
+
+        // ✅ Admin Configuration
+        const LARAVEL_URL = 'http://localhost:8000/api/v1';
+        const ADMIN_API_KEY = 'ATURIN_KEY_ULTRA_SECURE_2025'; // Dari .env
+        
+        let messaging;
+        let currentToken = '';
+        let serviceWorkerRegistration = null;
+        
+        // Helper functions
+        function log(message, type = 'info') {
+            const logs = document.getElementById('logs');
+            const timestamp = new Date().toLocaleTimeString();
+            const color = type === 'error' ? '#f56565' : type === 'success' ? '#48bb78' : type === 'admin' ? '#9c27b0' : '#63b3ed';
+            logs.innerHTML += `<div style="color: ${color};">[${timestamp}] ${message}</div>`;
+            logs.scrollTop = logs.scrollHeight;
+            console.log(message);
+        }
+        
+        function showStatus(element, message, type = 'info') {
+            const colors = {
+                success: '#d4edda',
+                error: '#f8d7da',
+                warning: '#fff3cd',
+                info: '#d1ecf1',
+                admin: '#f3e5f5'
+            };
+            element.innerHTML = `<div style="background: ${colors[type]}; padding: 10px; border-radius: 5px; margin: 10px 0;">${message}</div>`;
+        }
+
+        function waitForServiceWorker(registration) {
+            return new Promise((resolve) => {
+                if (registration.active) {
+                    resolve(registration);
+                    return;
+                }
+
+                const worker = registration.installing || registration.waiting;
+                if (worker) {
+                    worker.addEventListener('statechange', () => {
+                        if (worker.state === 'activated') {
+                            resolve(registration);
+                        }
+                    });
+                }
+            });
+        }
+        
+        // Step 1: Initialize Firebase
+        document.getElementById('initFirebase').addEventListener('click', async () => {
+            try {
+                log('🔄 Initializing Firebase...', 'info');
+                
+                firebase.initializeApp(firebaseConfig);
+                messaging = firebase.messaging();
+                
+                if ('serviceWorker' in navigator) {
+                    log('🔄 Registering service worker...', 'info');
+                    
+                    serviceWorkerRegistration = await navigator.serviceWorker.register('/firebase-messaging-sw.js', {
+                        scope: '/'
+                    });
+                    
+                    await waitForServiceWorker(serviceWorkerRegistration);
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    
+                    log('✅ Service worker registered and active!', 'success');
+                } else {
+                    throw new Error('Service workers not supported');
+                }
+                
+                log('✅ Firebase initialized successfully', 'success');
+                showStatus(document.getElementById('initStatus'), '✅ Firebase initialized!', 'success');
+                document.getElementById('requestPermission').disabled = false;
+            } catch (error) {
+                log('❌ Firebase initialization failed: ' + error.message, 'error');
+                showStatus(document.getElementById('initStatus'), '❌ Firebase initialization failed: ' + error.message, 'error');
+            }
+        });
+        
+        // Step 2: Request Permission
+        document.getElementById('requestPermission').addEventListener('click', async () => {
+            try {
+                log('🔄 Requesting notification permission...', 'info');
+                const permission = await Notification.requestPermission();
+                if (permission === 'granted') {
+                    log('✅ Notification permission granted', 'success');
+                    showStatus(document.getElementById('permissionStatus'), '✅ Permission granted!', 'success');
+                    document.getElementById('getToken').disabled = false;
+                } else {
+                    log('❌ Notification permission denied', 'error');
+                    showStatus(document.getElementById('permissionStatus'), '❌ Permission denied. Please allow notifications.', 'error');
+                }
+            } catch (error) {
+                log('❌ Permission request failed: ' + error.message, 'error');
+                showStatus(document.getElementById('permissionStatus'), '❌ Permission request failed: ' + error.message, 'error');
+            }
+        });
+        
+        // Step 3: Get FCM Token
+        document.getElementById('getToken').addEventListener('click', async () => {
+            try {
+                log('🔄 Getting FCM token...', 'info');
+                
+                if (!serviceWorkerRegistration || !serviceWorkerRegistration.active) {
+                    throw new Error('Service worker not active. Please reinitialize Firebase.');
+                }
+                
+                const token = await messaging.getToken({
+                    serviceWorkerRegistration: serviceWorkerRegistration
+                });
+                
+                if (token) {
+                    currentToken = token;
+                    log('✅ FCM Token received: ' + token.substring(0, 50) + '...', 'success');
+                    document.getElementById('tokenDisplay').innerHTML = `
+                        <div class="token-display">
+                            <strong>🎯 FCM Token:</strong><br>
+                            <span style="font-size: 12px;">${token}</span>
+                            <br><br>
+                            <button onclick="copyToken()" class="btn" style="font-size: 12px;">📋 Copy Token</button>
+                        </div>
+                    `;
+                    
+                    // Enable admin buttons
+                    document.getElementById('sendToDevice').disabled = false;
+                } else {
+                    log('❌ No registration token available', 'error');
+                    showStatus(document.getElementById('tokenDisplay'), '❌ No token available. Check Firebase setup.', 'error');
+                }
+            } catch (error) {
+                log('❌ Token generation failed: ' + error.message, 'error');
+                showStatus(document.getElementById('tokenDisplay'), '❌ Token generation failed: ' + error.message, 'error');
+            }
+        });
+        
+        // Helper: Copy token
+        function copyToken() {
+            navigator.clipboard.writeText(currentToken);
+            log('📋 Token copied to clipboard!', 'success');
+        }
+        
+        // ✅ ADMIN: Send to Device
+        document.getElementById('sendToDevice').addEventListener('click', async () => {
+            const title = document.getElementById('deviceTitle').value.trim();
+            const body = document.getElementById('deviceBody').value.trim();
+            
+            if (!title || !body || !currentToken) {
+                showStatus(document.getElementById('deviceStatus'), '❌ Please fill title, body and get FCM token first!', 'error');
+                return;
+            }
+            
+            try {
+                log('🚀 Sending notification to device via Admin API...', 'admin');
+                const response = await fetch(`${LARAVEL_URL}/admin/fcm/send-to-device`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Admin-API-Key': ADMIN_API_KEY // ✅ Admin API Key
+                    },
+                    body: JSON.stringify({
+                        device_token: currentToken,
+                        title: title,
+                        body: body,
+                        data: {
+                            type: 'admin_test',
+                            timestamp: new Date().toISOString()
+                        }
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (response.ok && result.status === 'Berhasil') {
+                    log('✅ Admin notification sent to device!', 'success');
+                    showStatus(document.getElementById('deviceStatus'), '✅ Notification sent! Check your notifications.', 'success');
+                } else {
+                    log('❌ Admin send failed: ' + (result.message || 'Unknown error'), 'error');
+                    showStatus(document.getElementById('deviceStatus'), '❌ Send failed: ' + (result.message || 'Unknown error'), 'error');
+                }
+            } catch (error) {
+                log('❌ Admin send error: ' + error.message, 'error');
+                showStatus(document.getElementById('deviceStatus'), '❌ Send error: ' + error.message, 'error');
+            }
+        });
+        
+        // ✅ ADMIN: Broadcast
+        document.getElementById('sendBroadcast').addEventListener('click', async () => {
+            const title = document.getElementById('broadcastTitle').value.trim();
+            const body = document.getElementById('broadcastBody').value.trim();
+            
+            if (!title || !body) {
+                showStatus(document.getElementById('broadcastStatus'), '❌ Please fill title and body!', 'error');
+                return;
+            }
+            
+            try {
+                log('📢 Sending broadcast via Admin API...', 'admin');
+                const response = await fetch(`${LARAVEL_URL}/admin/fcm/broadcast`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Admin-API-Key': ADMIN_API_KEY // ✅ Admin API Key
+                    },
+                    body: JSON.stringify({
+                        title: title,
+                        body: body
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (response.ok && result.status === 'Berhasil') {
+                    log(`✅ Broadcast sent to ${result.data.users_notified} users!`, 'success');
+                    showStatus(document.getElementById('broadcastStatus'), `✅ Broadcast sent to ${result.data.users_notified} users!`, 'success');
+                } else {
+                    log('❌ Broadcast failed: ' + (result.message || 'Unknown error'), 'error');
+                    showStatus(document.getElementById('broadcastStatus'), '❌ Broadcast failed: ' + (result.message || 'Unknown error'), 'error');
+                }
+            } catch (error) {
+                log('❌ Broadcast error: ' + error.message, 'error');
+                showStatus(document.getElementById('broadcastStatus'), '❌ Broadcast error: ' + error.message, 'error');
+            }
+        });
+    </script>
+</body>
+</html>
